@@ -635,28 +635,7 @@ class UNet2DConditionModel_custom(ModelMixin, ConfigMixin, UNet2DConditionLoader
 
         if c is None:
             c = torch.zeros(sample.shape[0], 16, device=timesteps.device)
-        
-        # 打印各个组件的形状以进行诊断
-        time_emb_output = self.time_embedding(t_emb, timestep_cond)
-        camera_emb_output = self.camera_emb(c)
-        print(f"Time embedding shape: {time_emb_output.shape}, Camera embedding shape: {camera_emb_output.shape}")
-        
-        # 确保维度匹配
-        if len(time_emb_output.shape) == 3 and time_emb_output.shape[1] == 1:
-            time_emb_output = time_emb_output.squeeze(1)
-        if len(camera_emb_output.shape) == 3 and camera_emb_output.shape[1] == 1:
-            camera_emb_output = camera_emb_output.squeeze(1)
-            
-        # 确保最终emb的形状正确
-        emb = time_emb_output + camera_emb_output
-        # 确保emb的维度为[batch_size, time_embed_dim]
-        if len(emb.shape) == 3 and emb.shape[1] == 1:
-            emb = emb.squeeze(1)
-        elif len(emb.shape) == 1:
-            emb = emb.unsqueeze(0)  # 添加batch维度如果缺失
-            
-        # 打印最终的emb形状
-        print(f"Final emb shape: {emb.shape}")
+        emb = self.time_embedding(t_emb, timestep_cond) + self.camera_emb(c)
 
         if shading == "textureless":
             emb = emb + self.textureless_emb
@@ -692,15 +671,9 @@ class UNet2DConditionModel_custom(ModelMixin, ConfigMixin, UNet2DConditionLoader
         down_block_res_samples = (sample,)
         for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
-                # 计算hidden_states和temb的维度大小
+                # if len(emb.shape) == 3 and emb.shape[1] == 1:
+                #     emb = emb.squeeze(1)
                 
-                # 确保emb的维度正确，避免出现[batch_size, 1, time_embed_dim]的情况
-                if len(emb.shape) == 3 and emb.shape[1] == 1:
-                    emb = emb.squeeze(1)
-                    print(f"Adjusted temb shape: {emb.shape}")
-                sample_shape = sample.shape
-                emb_shape = emb.shape
-                print(f"Hidden states shape: {sample_shape}, Temb shape: {emb_shape}")
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
                     temb=emb,

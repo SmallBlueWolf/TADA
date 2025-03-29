@@ -220,7 +220,6 @@ class StableDiffusion(nn.Module):
             # pred noise
             latent_model_input = torch.cat([latents_noisy] * 2)
             tt = torch.cat([t] * 2)
-            print(f"text_embeddings shape: {text_embeddings.shape}")
             noise_pred = self.unet(latent_model_input, t, encoder_hidden_states=text_embeddings).sample
 
             # perform guidance (high scale from paper!)
@@ -275,8 +274,8 @@ class StableDiffusion(nn.Module):
         grad = torch.nan_to_num(grad)
 
         # 这里改为自定义梯度计算方法，BP计算梯度相同，但省去前向传播的计算，提高效率
-        loss = SpecifyGradient.apply(latents, grad)
-
+        # loss = SpecifyGradient.apply(latents, grad)
+        loss = 0.5 * F.mse_loss(latents, (latents - grad).detach(), reduction="sum") / latents.shape[0]
         #　pseudo_loss = torch.mul((w*noise_pred).detach(), latents.detach()).detach().sum()
         # return loss, pseudo_loss, latents
         
@@ -352,8 +351,8 @@ class StableDiffusion(nn.Module):
             
             with torch.no_grad():
                 latents_clean = latents.expand(self.opt.unet_bs, latents.shape[1], latents.shape[2], latents.shape[3]).contiguous()
-                pose = data['pose']
-                pose = pose.expand(self.opt.unet_bs, 16).contiguous()
+                # 从data['poses']（形状为[1, 4, 4]）中获取pose并展平为[unet_bs, 16]
+                pose = data['poses'].view(1, -1).expand(self.opt.unet_bs, 16).contiguous()
                 if random.random() < self.opt.uncond_p:
                     pose = torch.zeros_like(pose)
             

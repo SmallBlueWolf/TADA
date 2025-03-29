@@ -239,12 +239,12 @@ class Trainer(object):
         dir_text_z = [self.text_embeds['uncond'], self.text_embeds[data['camera_type'][0]][data['dirkey'][0]]]
         dir_text_z = torch.cat(dir_text_z)
 
-        out = self.model(rays_o, rays_d, mvp, data['H'], data['W'], shading='albedo', pose=data['pose'])
+        out = self.model(rays_o, rays_d, mvp, data['H'], data['W'], shading='albedo', pose=data['poses'].view(1, -1))
         image = out['image'].permute(0, 3, 1, 2)
         normal = out['normal'].permute(0, 3, 1, 2)
         alpha = out['alpha'].permute(0, 3, 1, 2)
 
-        out_annel = self.model(rays_o, rays_d, mvp, H, W, shading='albedo', pose=data['pose'])
+        out_annel = self.model(rays_o, rays_d, mvp, H, W, shading='albedo', pose=data['poses'].view(1, -1))
         image_annel = out_annel['image'].permute(0, 3, 1, 2)
         normal_annel = out_annel['normal'].permute(0, 3, 1, 2)
         alpha_annel = out_annel['alpha'].permute(0, 3, 1, 2)
@@ -301,10 +301,12 @@ class Trainer(object):
                 loss = loss + lambda_depth * (1 - self.pearson(depth, gt_depth))
         else:
             # rgb sds
-            loss = self.guidance.train_step(dir_text_z, image_annel, t5=t5, pose=data['pose'], shading=q_shading).mean()
+            loss = self.guidance.train_step(dir_text_z, image_annel, t5=t5, pose=data['poses'].view(1, -1), shading=q_shading).mean()
+            print(f"rgb loss: {loss.item()}")
             if not self.dpt:
                 # normal sds
-                loss += self.guidance.train_step(dir_text_z, normal, t5=t5, pose=data['pose'], shading=q_shading).mean()
+                loss += self.guidance.train_step(dir_text_z, normal, t5=t5, pose=data['poses'].view(1, -1), shading=q_shading).mean()
+                print(f"normal loss: {loss.item()}")
                 # latent mean sds
                 # loss += self.guidance.train_step(dir_text_z, torch.cat([normal, image.detach()])).mean() * 0.1
             else:
@@ -314,7 +316,7 @@ class Trainer(object):
                 '''
                 if p_iter < 0.3 or random.random() < 0.5:
                     # normal sds
-                    loss += self.guidance.train_step(dir_text_z, normal, t5=t5, pose=data['pose'], shading=q_shading).mean()
+                    loss += self.guidance.train_step(dir_text_z, normal, t5=t5, pose=data['poses'].view(1, -1), shading=q_shading).mean()
                 elif self.dpt is not None :
                     # normal image loss
                     dpt_normal = self.dpt(image)

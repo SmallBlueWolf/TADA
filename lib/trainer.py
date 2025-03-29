@@ -57,6 +57,9 @@ class Trainer(object):
         self.metrics = metrics
         self.local_rank = local_rank
         self.world_size = world_size
+        
+        self.image_annel = None
+        self.normal = None
 
         self.workspace = os.path.join(opt.workspace, self.name, self.text)
         self.ema_decay = ema_decay
@@ -174,25 +177,25 @@ class Trainer(object):
             return
 
         self.text_embeds = {
-            'uncond': self.guidance.get_text_embeds([self.negative]),
-            'default': self.guidance.get_text_embeds([f"a 3D rendering of {self.text}, full-body"]),
+            'uncond': self.guidance.get_text_embeds([self.negative], [self.negative]),
+            'default': self.guidance.get_text_embeds([f"a 3D rendering of {self.text}, full-body"], [self.negative]),
         }
 
         if self.opt.train_face_ratio < 1:
             self.text_embeds['body'] = {
-                d: self.guidance.get_text_embeds([f"a {d} view 3D rendering of {self.text}, full-body"])
+                d: self.guidance.get_text_embeds([f"a {d} view 3D rendering of {self.text}, full-body"], [self.negative])
                 for d in ['front', 'side', 'back', "overhead"]
             }
 
         if self.opt.train_face_ratio > 0:
             id_text = self.text.split("wearing")[0]
             self.text_embeds['face'] = {
-                d: self.guidance.get_text_embeds([f"a {d} view 3D rendering of {id_text}, face"])
+                d: self.guidance.get_text_embeds([f"a {d} view 3D rendering of {id_text}, face"], [self.negative])
                 for d in ['front', 'side', 'back']
             }
 
     def __del__(self):
-        if self.log_ptr:
+        if hasattr(self, 'log_ptr') and self.log_ptr:
             self.log_ptr.close()
 
     def log(self, *args, **kwargs):
@@ -236,12 +239,12 @@ class Trainer(object):
         dir_text_z = [self.text_embeds['uncond'], self.text_embeds[data['camera_type'][0]][data['dirkey'][0]]]
         dir_text_z = torch.cat(dir_text_z)
 
-        out = self.model(rays_o, rays_d, mvp, data['H'], data['W'], shading='albedo')
+        out = self.model(rays_o, rays_d, mvp, data['H'], data['W'], shading='albedo', pose=data['pose'])
         image = out['image'].permute(0, 3, 1, 2)
         normal = out['normal'].permute(0, 3, 1, 2)
         alpha = out['alpha'].permute(0, 3, 1, 2)
 
-        out_annel = self.model(rays_o, rays_d, mvp, H, W, shading='albedo')
+        out_annel = self.model(rays_o, rays_d, mvp, H, W, shading='albedo', pose=data['pose'])
         image_annel = out_annel['image'].permute(0, 3, 1, 2)
         normal_annel = out_annel['normal'].permute(0, 3, 1, 2)
         alpha_annel = out_annel['alpha'].permute(0, 3, 1, 2)
@@ -251,6 +254,36 @@ class Trainer(object):
 
         p_iter = self.global_step / self.opt.iters
 
+        self.image_annel = image_annel
+        self.normal = normal
+
+        '''
+            这里配合sd_vsd.py中模拟退火的扩散是策略，由self.opt.t5_iter_percent决定
+        '''
+        t5 = False
+        threshold_iter = int(self.opt.t5_iter_percent * self.opt.iters)
+        if self.opt.t5_iter_percent != -1 and self.global_step >= threshold_iter:
+            if self.global_step == threshold_iter:
+                print("Change into anneal tmax = 500 setting")
+            t5 = True
+            
+        '''
+            确定用于q_unet的shading策略，不影响self.model的渲染
+        '''
+        if self.global_step < self.opt.albedo_iters:
+            q_shading = 'albedo'
+        else: 
+            rand = random.random()
+            if rand > 0.8: 
+                q_shading = 'albedo'
+            elif rand > 0.4 and (not self.opt.no_textureless): 
+                q_shading = 'textureless'
+            else: 
+                if not self.opt.no_lambertian:
+                    q_shading = 'lambertian'
+                else:
+                    q_shading = 'albedo'
+        
         if do_rgbd_loss:  # with image input
             # gt_mask = data['mask']  # [B, H, W]
             gt_rgb = data['rgb']  # [B, 3, H, W]
@@ -268,16 +301,20 @@ class Trainer(object):
                 loss = loss + lambda_depth * (1 - self.pearson(depth, gt_depth))
         else:
             # rgb sds
-            loss = self.guidance.train_step(dir_text_z, image_annel).mean()
+            loss = self.guidance.train_step(dir_text_z, image_annel, t5=t5, pose=data['pose'], shading=q_shading).mean()
             if not self.dpt:
                 # normal sds
-                loss += self.guidance.train_step(dir_text_z, normal).mean()
+                loss += self.guidance.train_step(dir_text_z, normal, t5=t5, pose=data['pose'], shading=q_shading).mean()
                 # latent mean sds
                 # loss += self.guidance.train_step(dir_text_z, torch.cat([normal, image.detach()])).mean() * 0.1
             else:
+                '''
+                    由于我的测试还没有用到omnidata，所以这里暂时不使用DPT，还没有考虑这一部分的修改
+                    所以使用omnidata时暂时不要is_vds True！！！
+                '''
                 if p_iter < 0.3 or random.random() < 0.5:
                     # normal sds
-                    loss += self.guidance.train_step(dir_text_z, normal).mean()
+                    loss += self.guidance.train_step(dir_text_z, normal, t5=t5, pose=data['pose'], shading=q_shading).mean()
                 elif self.dpt is not None :
                     # normal image loss
                     dpt_normal = self.dpt(image)
@@ -312,8 +349,6 @@ class Trainer(object):
                     [landmark.x, landmark.y] for idx, landmark in enumerate(mediapipe_landmarks[0]) if
                     idx in mp_contour_idx
                 ])
-                mp_lmk_all = np.array(
-                    [[landmark.x, landmark.y] for idx, landmark in enumerate(mediapipe_landmarks[0])])
 
                 mp_lmk_mouth = torch.tensor(mp_lmk_mouth, device=image.device).float().view(1, -1, 2)
                 mp_lmk_nose = torch.tensor(mp_lmk_nose, device=image.device).float().view(1, -1, 2)
@@ -356,7 +391,6 @@ class Trainer(object):
                     [rgb_np[:, 80:-80], nml_np[:, 80:-80], rgb_np_ori[:, 80:256] * 255, nml_np_ori[:, 256:-80]])[50:]
                 cv2.imwrite("im.png", pred[..., ::-1])
                 exit()
-
 
         return pred, loss
 
@@ -401,6 +435,7 @@ class Trainer(object):
         self.log(f"==> Finished saving mesh.")
 
     def train(self, train_loader, valid_loader, max_epochs):
+        
         if self.use_tensorboardX and self.local_rank == 0:
             self.writer = tensorboardX.SummaryWriter(os.path.join(self.workspace, "run", self.name))
 
@@ -430,6 +465,12 @@ class Trainer(object):
             if self.epoch % self.eval_interval == 0:
                 self.evaluate_one_epoch(valid_loader)
                 self.save_checkpoint(full=False, best=True)
+
+        '''
+            TODO 1
+            这里还应该有，从utils.py L914开始的一些用于测试、可视化的代码
+        '''
+
 
         end_t = time.time()
 
@@ -465,7 +506,7 @@ class Trainer(object):
         with torch.no_grad():
 
             for i, data in enumerate(loader):
-                with torch.cuda.amp.autocast(enabled=self.fp16):
+                with torch.autocast(device_type="cuda", enabled=self.fp16):
                     preds, _ = self.test_step(data)
 
                 pred = preds[0].detach().cpu().numpy()
@@ -511,13 +552,14 @@ class Trainer(object):
         self.local_step = 0
 
         for data in loader:
+            self.model.set_idx()
 
             self.local_step += 1
             self.global_step += 1
 
             self.optimizer.zero_grad()
 
-            with torch.cuda.amp.autocast(enabled=self.fp16):
+            with torch.autocast(device_type="cuda", enabled=self.fp16):
                 pred_rgbs, loss = self.train_step(data, loader.dataset.full_body)
 
             if self.global_step % 20 == 0:
@@ -535,6 +577,20 @@ class Trainer(object):
 
             loss_val = loss.item()
             total_loss += loss_val
+
+            '''
+                更新q_unet
+            '''
+            if self.global_step % self.opt.K2 == 0 and self.opt.use_vsd:
+                loss_q_unet = self.guidance.train_q_unet(self.global_step, data, pred_rgb=self.image_annel)
+                loss_q_unet += self.guidance.train_q_unet(self.global_step, data, pred_rgb=self.normal)
+                self.guidance.update_q_unet(loss_q_unet)
+                if self.global_step % (self.opt.K2 * 10) == 0:
+                    print(f"[INFO] Updated q_unet at global step {self.global_step}, loss: {loss_q_unet.item():.6f}")
+            
+            '''
+                结束更新q_unet
+            '''
 
             if self.local_rank == 0:
                 if self.use_tensorboardX:
@@ -600,7 +656,7 @@ class Trainer(object):
             for data in loader:
                 self.local_step += 1
 
-                # with torch.cuda.amp.autocast(enabled=self.fp16):
+                # with torch.autocast(device_type="cuda", enabled=self.fp16):
                 preds, loss = self.eval_step(data)
 
                 # all_gather/reduce the statistics (NCCL only support all_*)

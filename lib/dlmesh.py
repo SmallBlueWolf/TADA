@@ -152,6 +152,17 @@ class DLMesh(nn.Module):
                                                output_facial_transformation_matrixes=True,
                                                num_faces=1)
         self.detector = vision.FaceLandmarker.create_from_options(options)
+        
+        self.n_particles = opt.n_particles
+        self.idx = None
+        self.mytrain = None
+
+    @torch.no_grad()
+    def set_idx(self, idx=None):
+        if idx == None:
+            self.idx = random.randint(0, self.n_particles-1)
+        else:
+            self.idx = idx
 
     @torch.no_grad()
     def get_init_body(self, cache_path='./data/init_body/data.npz'):
@@ -360,7 +371,7 @@ class DLMesh(nn.Module):
         face_landmarks_list = detection_result.face_landmarks
         return face_landmarks_list
 
-    def forward(self, rays_o, rays_d, mvp, h, w, light_d=None, ambient_ratio=1.0, shading='albedo', is_train=True):
+    def forward(self, rays_o, rays_d, mvp, h, w, pose, light_d=None, ambient_ratio=1.0, shading='albedo', is_train=True):
 
         batch = rays_o.shape[0]
 
@@ -394,4 +405,5 @@ class DLMesh(nn.Module):
             "alpha": alpha,
             "normal": normal,
             "smplx_landmarks": smplx_landmarks,
+            "pose": pose,
         }

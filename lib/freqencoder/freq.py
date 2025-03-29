@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
-from torch.cuda.amp import custom_bwd, custom_fwd 
 
 try:
     import _freqencoder as _backend
@@ -14,7 +13,6 @@ except ImportError:
 
 class _freq_encoder(Function):
     @staticmethod
-    @custom_fwd(cast_inputs=torch.float32) # force float32 for better precision
     def forward(ctx, inputs, degree, output_dim):
         # inputs: [B, input_dim], float 
         # RETURN: [B, F], float
@@ -34,8 +32,6 @@ class _freq_encoder(Function):
         return outputs
     
     @staticmethod
-    #@once_differentiable
-    @custom_bwd
     def backward(ctx, grad):
         # grad: [B, C * C]
 

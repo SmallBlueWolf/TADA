@@ -537,6 +537,8 @@ class ViewDataset(torch.utils.data.Dataset):
             delta_azimuth -= 360  # range in [-180, 180]
         delta_radius = radius - self.opt.default_radius
 
+        flattened_pose = poses.view(-1, 16)
+
         data = {
             'H': self.H,
             'W': self.W,
@@ -545,11 +547,11 @@ class ViewDataset(torch.utils.data.Dataset):
             'dir': dirs,
             'mvp': mvp,  # [4, 4]
             'poses': poses.squeeze(0),
+            'pose': flattened_pose,
             'intrinsics': torch.as_tensor(intrinsics, dtype=torch.float32, device=self.device),
             'dirkey': self.id_dir_map[dirs],
             # 'azimuth': phis,
             'camera_type': camera_type,
-
             'polar': delta_polar,
             'azimuth': delta_azimuth,
             'radius': delta_radius,

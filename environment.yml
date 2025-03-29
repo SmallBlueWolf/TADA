@@ -1,14 +1,15 @@
-name: tada
+name: tada_vsd
 channels:
   - pytorch
+  - nvidia
   - conda-forge
   - defaults
 dependencies:
-  - python=3.9
-  - pytorch=1.12.1
-  - torchvision=0.13.1
-  - torchaudio=0.12.1
-  - cudatoolkit=11.6
+  - python=3.10
+  - pytorch=2.5.1
+  - torchvision=0.20.1
+  - torchaudio=2.5.1
+  - pytorch-cuda=12.1
 #  - matplotlib=3.5.2
   - jupyter=1.0.0
   - pip

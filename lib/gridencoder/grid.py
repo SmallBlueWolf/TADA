@@ -4,7 +4,6 @@ import torch
 import torch.nn as nn
 from torch.autograd import Function
 from torch.autograd.function import once_differentiable
-from torch.cuda.amp import custom_bwd, custom_fwd 
 
 try:
     import _gridencoder as _backend
@@ -23,7 +22,6 @@ _interp_to_id = {
 
 class _grid_encode(Function):
     @staticmethod
-    @custom_fwd
     def forward(ctx, inputs, embeddings, offsets, per_level_scale, base_resolution, calc_grad_inputs=False, gridtype=0, align_corners=False, interpolation=0):
         # inputs: [B, D], float in [0, 1]
         # embeddings: [sO, C], float
@@ -64,7 +62,6 @@ class _grid_encode(Function):
     
     @staticmethod
     #@once_differentiable
-    @custom_bwd
     def backward(ctx, grad):
 
         inputs, embeddings, offsets, dy_dx = ctx.saved_tensors
@@ -161,7 +158,7 @@ class GridEncoder(nn.Module):
         return outputs
 
     # always run in float precision!
-    @torch.cuda.amp.autocast(enabled=False)
+    @torch.autocast(device_type="cuda", enabled=False)
     def grad_total_variation(self, weight=1e-7, inputs=None, bound=1, B=1000000):
         # inputs: [..., input_dim], float in [-b, b], location to calculate TV loss.
         

@@ -10,16 +10,18 @@ rich
 torch_ema
 dearpygui
 transformers
-diffusers
+diffusers==0.15.0
 accelerate
 trimesh
 pyrender
 easydict
 yacs
 fvcore
-pyopengl==3.1.4
+# pyopengl==3.1.4
+pyopengl
 iopath
 ninja
 mediapipe
 timm
+networkx
 git+https://github.com/NVlabs/nvdiffrast.git

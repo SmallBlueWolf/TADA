@@ -7,6 +7,7 @@ from lib.provider import ViewDataset
 from lib.trainer import *
 from lib.dlmesh import DLMesh
 from lib.common.utils import load_config
+import lib.patch_hfhub
 
 torch.autograd.set_detect_anomaly(True)
 
@@ -40,11 +41,11 @@ if __name__ == '__main__':
         dataset = ViewDataset(cfg.data, device=device, type=phase, size=size)
         return DataLoader(dataset, batch_size=1, shuffle=False, num_workers=0)
 
-    def configure_guidance():
+    def configure_guidance(text):
         opt = cfg.guidance
         if opt.name == 'sd':
-            from lib.guidance.sd import StableDiffusion
-            return StableDiffusion(device, cfg.fp16, opt.vram_O, opt.sd_version)
+            from lib.guidance.sd_vsd import StableDiffusion
+            return StableDiffusion(device, cfg.fp16, opt.vram_O, opt.sd_version, opt=cfg.training, text=text)
         elif opt.name == 'if':
             from lib.guidance.deepfloyd import IF
             return IF(device, opt.vram_O)
@@ -92,9 +93,9 @@ if __name__ == '__main__':
 
         scheduler, optimizer = configure_optimizer()
         try:
-            guidance = configure_guidance()
+            guidance = configure_guidance(cfg.text)
         except:
-            guidance = configure_guidance()
+            guidance = configure_guidance(cfg.text)
         trainer = Trainer(cfg.name,
                           text=cfg.text,
                           negative=cfg.negative,

@@ -88,9 +88,13 @@ class StableDiffusion(nn.Module):
             from diffusers.models.attention_processor import LoRAAttnProcessor
             import einops
             if not self.opt.v_pred:
+                # 对于epsilon prediction策略，使用stable-diffusion-2-1-base
                 _unet = UNet2DConditionModel_custom.from_pretrained("stabilityai/stable-diffusion-2-1-base", subfolder="unet", low_cpu_mem_usage=False, device_map=None).to(device)
+                print("Using epsilon prediction strategy with stable-diffusion-2-1-base")
             else:
+                # 对于v prediction策略，使用stable-diffusion-2-1
                 _unet = UNet2DConditionModel_custom.from_pretrained("stabilityai/stable-diffusion-2-1", subfolder="unet", low_cpu_mem_usage=False, device_map=None).to(device)
+                print("Using v prediction strategy with stable-diffusion-2-1")
             
             _unet.requires_grad_(False)
             lora_attn_procs = {}
@@ -229,7 +233,7 @@ class StableDiffusion(nn.Module):
             '''
                 利用q_unet预测噪声
             '''
-            timesteps = torch.randint(0, 1000, (self.opt.unet_bs,), device=self.device).long()
+            timesteps = torch.randint(0, 1000, (latents_noisy.shape[0],), device=self.device).long()
             if self.opt.use_vsd:
                 if self.q_unet is None:
                     raise NotImplementedError()
@@ -251,6 +255,10 @@ class StableDiffusion(nn.Module):
                     while len(sqrt_one_minus_alpha_prod.shape) < len(latents_noisy.shape):
                         sqrt_one_minus_alpha_prod = sqrt_one_minus_alpha_prod.unsqueeze(-1)
                     noise_pred_q = sqrt_alpha_prod * noise_pred_q + sqrt_one_minus_alpha_prod * latents_noisy
+                else:
+                    # 使用传统的epsilon-prediction策略
+                    # noise_pred_q已经是epsilon的预测，不需要额外转换
+                    pass
 
         if self.weighting_strategy == "sds":
             # w(t), sigma_t^2
@@ -362,6 +370,16 @@ class StableDiffusion(nn.Module):
             model_output = self.q_unet(latents_noisy, timesteps, c=pose, shading=shading).sample
 
             loss_q_unet = F.mse_loss(model_output, self.scheduler.get_velocity(latents_clean, noise, timesteps))
+            
+            # 根据v_pred策略调整损失计算方式
+            if not self.opt.v_pred:
+                # 使用epsilon prediction策略计算损失
+                target = noise
+                loss_q_unet = F.mse_loss(model_output, target)
+            else:
+                # 使用v prediction策略计算损失
+                target = self.scheduler.get_velocity(latents_clean, noise, timesteps)
+                loss_q_unet = F.mse_loss(model_output, target)
             
             return loss_q_unet
                 

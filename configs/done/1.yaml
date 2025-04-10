@@ -24,7 +24,8 @@ test: false
 training:
   anneal_tex_reso: true
   ckpt: scratch
-  iters: 25000
+  iters: 20000
   train_face_ratio: 0.3
+  v_pred: True
   use_dpt: false
-  workspace: ../results/tada_vsd(test2)
+  workspace: ../results/tada_vsd(test3_only_v_pred)

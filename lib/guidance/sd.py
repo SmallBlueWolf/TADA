@@ -91,7 +91,7 @@ class StableDiffusion(nn.Module):
 
         return text_embeddings
 
-    def train_step(self, text_embeddings, pred_rgb, guidance_scale=100, rgb_as_latents=False):
+    def train_step(self, text_embeddings, pred_rgb, guidance_scale=7.5, rgb_as_latents=False):
         if rgb_as_latents:
             latents = F.interpolate(pred_rgb, (64, 64), mode='bilinear', align_corners=False)
             latents = latents * 2 - 1

@@ -401,7 +401,7 @@ class Trainer(object):
         mvp = data['mvp']
         rays_o = data['rays_o']  # [B, N, 3]
         rays_d = data['rays_d']  # [B, N, 3]
-        out = self.model(rays_o, rays_d, mvp, H, W, shading='albedo', is_train=False)
+        out = self.model(rays_o, rays_d, mvp, H, W, shading='albedo', is_train=False, pose=data['poses'].view(1, -1))
         w = out['normal'].shape[2]
         pred = torch.cat([out['normal'], out['image'],
                           torch.cat([out['normal'][:, :, :w // 2], out['image'][:, :, w // 2:]], dim=2)], dim=1)
@@ -416,7 +416,7 @@ class Trainer(object):
         mvp = data['mvp']
         rays_o = data['rays_o']  # [B, N, 3]
         rays_d = data['rays_d']  # [B, N, 3]
-        out = self.model(rays_o, rays_d, mvp, H, W, shading='albedo', is_train=False)
+        out = self.model(rays_o, rays_d, mvp, H, W, shading='albedo', is_train=False, pose=data['poses'].view(1, -1))
         w = out['normal'].shape[2]
         pred = torch.cat([out['normal'], out['image'],
                           torch.cat([out['normal'][:, :, :w // 2], out['image'][:, :, w // 2:]], dim=2)], dim=2)

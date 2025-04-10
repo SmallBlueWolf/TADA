@@ -24,7 +24,12 @@ test: false
 training:
   anneal_tex_reso: true
   ckpt: scratch
-  iters: 25000
+  iters: 20000
   train_face_ratio: 0.3
   use_dpt: false
-  workspace: ../results/tada_vsd(test2)
+  workspace: ../results/tada_vsd(test5_add_constraint)
+  v_pred: False
+  t5_iter_percent: 0.5
+  use_cons: True
+  lambda_cons: 0.1
+  min_limb_thickness: 0.05

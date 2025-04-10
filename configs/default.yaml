@@ -12,7 +12,7 @@ guidance:
   sd_version: '2.1'
   hf_key: None
 training:
-  iters: 5000
+  iters: 20000
   albedo_iters: 10000
   lr: 0.001
   min_lr: 1e-4
@@ -35,12 +35,11 @@ training:
   # new params
   use_vsd: True
   use_anneal_t: True
-  v_pred: True
   unet_lr: 0.0001
   warm_iters: 500
   K: 1 # 每一次q_unet更新执行K次
   K2: 1 # 每K2次iter执行一次q_unet更新
-  t5_iter_percent: 0.5 # 这里是百分比，表示在50%的iters时开始使用模拟退火（暂时是tmax=500）的策略
+  t5_iter_percent: 1.0 # 在30%的迭代时开始使用模拟退火
   albedo_iters: 1000 # 使用albedo着色的迭代次数
   normal_iters: -1 # 使用normal着色的迭代次数
   normal: False # 是否启用normal着色
@@ -48,7 +47,7 @@ training:
   no_lambertian: False # 是否禁用lambertian着色
   p_textureless: 0 # textureless着色的概率
   backbone: "particle"
-  uncond_p: 0.1 # 无条件pose训练的概率
+  uncond_p: 0.01 # 无条件pose训练的概率
   unet_bs: 1 # q_unet的batch_size
   q_scheduler_update_every_step: True # 是否在每个step更新q_unet的scheduler
 data:

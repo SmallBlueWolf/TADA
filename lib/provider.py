@@ -316,12 +316,16 @@ class ViewDataset(torch.utils.data.Dataset):
 
         self.aspect = self.W / self.H
         self.full_body = False
+        self.train_wrist = False
 
         self.face_center = torch.as_tensor([0, 0.42, 0], device=device).view(1, 3)
         self.face_scale = 1.
 
         self.body_center = torch.zeros(1, 3, device=device)
         self.body_scale = 1.
+        
+        self.wrist_center = torch.as_tensor([0, 0, 0], device=device).view(1, 3)
+        self.wrist_scale = 1.
 
         self.id_dir_map = ['front', 'side', 'back']
 
@@ -478,7 +482,21 @@ class ViewDataset(torch.utils.data.Dataset):
                     shift=self.body_center,
                     face_scale=self.body_scale
                 )
-
+            elif self.train_wrist:
+                camera_type = "wrist"
+                # 手腕训练模式，使用更小的视角范围，更集中于手腕部位
+                poses, dirs, thetas, phis, radius = near_head_poses(
+                    1,
+                    self.device,
+                    return_dirs=self.opt.dir_text,
+                    phi_range=[-60, 60],  # 扩大水平视角范围
+                    theta_range=[55, 85],  # 稍微调整垂直视角范围
+                    angle_overhead=self.opt.angle_overhead,
+                    angle_front=self.opt.angle_front,
+                    jitter=self.opt.jitter_pose,
+                    shift=self.wrist_center,
+                    face_scale=self.wrist_scale * 1.5  # 增加距离系数，让相机更远一些
+                )
             else:
                 camera_type = "face"
                 poses, dirs, thetas, phis, radius = near_head_poses(

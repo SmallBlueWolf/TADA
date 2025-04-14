@@ -45,7 +45,8 @@ if __name__ == '__main__':
         opt = cfg.guidance
         if opt.name == 'sd':
             from lib.guidance.sd_vsd import StableDiffusion
-            return StableDiffusion(device, cfg.fp16, opt.vram_O, opt.sd_version, opt=cfg.training, text=text)
+            return StableDiffusion(device, cfg.fp16, opt.vram_O, opt.sd_version, 
+                                  opt=cfg.training, text=text, negative=cfg.negative)
         elif opt.name == 'if':
             from lib.guidance.deepfloyd import IF
             return IF(device, opt.vram_O)

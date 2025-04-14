@@ -50,6 +50,8 @@ training:
   uncond_p: 0.01 # 无条件pose训练的概率
   unet_bs: 1 # q_unet的batch_size
   q_scheduler_update_every_step: True # 是否在每个step更新q_unet的scheduler
+  train_wrist_ratio: 0.1
+  v_pred: True
 data:
   h: 512
   w: 512

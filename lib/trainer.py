@@ -60,6 +60,9 @@ class Trainer(object):
         
         self.image_annel = None
         self.normal = None
+        
+        # 初始化训练类型标记
+        self.current_train_type = "[none]"
 
         self.workspace = os.path.join(opt.workspace, self.name, self.text)
         self.ema_decay = ema_decay
@@ -194,6 +197,20 @@ class Trainer(object):
                 for d in ['front', 'side', 'back']
             }
 
+        # 创建基本的wrist嵌入
+        wrist_prompts = {
+            'front': f"a front view of {id_text}'s hands and wrists with smooth transition to forearms, anatomically correct fingers, and seamless wrist-arm connection",
+            'side': f"a side view of {id_text}'s hands with natural wrist joint and continuous flowing geometry from hand to forearm",
+            'back': f"a back view of {id_text}'s hands showing detailed structure and harmonious geometric continuity between wrist and arm"
+        }
+        
+        self.text_embeds['wrist'] = {}
+        for view in ['front', 'side', 'back']:
+            self.text_embeds['wrist'][view] = self.guidance.get_text_embeds(
+                [wrist_prompts.get(view, wrist_prompts['front'])], 
+                [negative_prompt]
+            )
+
     def __del__(self):
         if hasattr(self, 'log_ptr') and self.log_ptr:
             self.log_ptr.close()
@@ -236,7 +253,54 @@ class Trainer(object):
         #  Compute loss
         # ==============================================================================================
 
-        dir_text_z = [self.text_embeds['uncond'], self.text_embeds[data['camera_type'][0]][data['dirkey'][0]]]
+        # 根据相机类型选择适当的文本嵌入
+        camera_type = data['camera_type'][0]
+        dirkey = data['dirkey'][0]
+        
+        print(f"[DEBUG] Current train type: {self.current_train_type}, camera_type: {camera_type}, dirkey: {dirkey}")
+        
+        dir_text_z = [self.text_embeds['uncond']]
+        
+        # 确保wrist嵌入存在
+        if camera_type == 'wrist' and 'wrist' not in self.text_embeds:
+            print(f"[WARN] Creating missing wrist embeddings on-the-fly")
+            id_text = self.text.split("wearing")[0] if "wearing" in self.text else self.text
+            negative_prompt = getattr(self.guidance, 'negative', '')
+            
+            # 创建基本的wrist嵌入
+            wrist_prompts = {
+                'front': f"a front view of {id_text}'s hands and wrists with smooth transition to forearms, anatomically correct fingers, and seamless wrist-arm connection",
+                'side': f"a side view of {id_text}'s hands with natural wrist joint and continuous flowing geometry from hand to forearm",
+                'back': f"a back view of {id_text}'s hands showing detailed structure and harmonious geometric continuity between wrist and arm"
+            }
+            
+            self.text_embeds['wrist'] = {}
+            for view in ['front', 'side', 'back']:
+                self.text_embeds['wrist'][view] = self.guidance.get_text_embeds(
+                    [wrist_prompts.get(view, wrist_prompts['front'])], 
+                    [negative_prompt]
+                )
+        
+        try:
+            if camera_type in self.text_embeds and dirkey in self.text_embeds[camera_type]:
+                dir_text_z.append(self.text_embeds[camera_type][dirkey])
+                print(f"Using text embedding for {camera_type}-{dirkey}")
+            else:
+                # 如果找不到特定的embeddings，打印更多调试信息
+                if camera_type in self.text_embeds:
+                    print(f"WARNING: No specific text embedding for {camera_type}-{dirkey}, available keys: {list(self.text_embeds[camera_type].keys())}")
+                else:
+                    print(f"WARNING: No embeddings for {camera_type}, available types: {list(self.text_embeds.keys())}")
+                    
+                # 回退到默认文本嵌入
+                print(f"WARNING: Using default text embedding instead")
+                dir_text_z.append(self.text_embeds['default'])
+        except Exception as e:
+            print(f"ERROR in text embedding selection: {e}")
+            print(f"Available embedding types: {list(self.text_embeds.keys())}")
+            # 使用默认嵌入作为备选
+            dir_text_z.append(self.text_embeds['default'])
+            
         dir_text_z = torch.cat(dir_text_z)
 
         out = self.model(rays_o, rays_d, mvp, data['H'], data['W'], shading='albedo', pose=data['poses'].view(1, -1))
@@ -447,14 +511,29 @@ class Trainer(object):
             self.epoch = epoch
 
             with torch.no_grad():
-                if random.random() < self.opt.train_face_ratio:
+                # 确定本次epoch的训练模式（全身/脸部/手腕）
+                random_val = random.random()
+                if random_val < self.opt.train_face_ratio:
+                    # 脸部训练模式
                     train_loader.dataset.full_body = False
+                    train_loader.dataset.train_wrist = False
                     face_center, face_scale = self.model.get_mesh_center_scale("face")
                     train_loader.dataset.face_center = face_center
                     train_loader.dataset.face_scale = face_scale.item() * 10
-
+                    self.current_train_type = "[face]"
+                elif random_val < (self.opt.train_face_ratio + self.opt.train_wrist_ratio):
+                    # 手腕训练模式
+                    train_loader.dataset.full_body = False
+                    train_loader.dataset.train_wrist = True
+                    wrist_center, wrist_scale = self.model.get_wrist_center_scale()
+                    train_loader.dataset.wrist_center = wrist_center
+                    train_loader.dataset.wrist_scale = wrist_scale.item() * 8  # 增加初始缩放系数，确保视角更宽
+                    self.current_train_type = "[wrist]"
                 else:
+                    # 全身训练模式
                     train_loader.dataset.full_body = True
+                    train_loader.dataset.train_wrist = False
+                    self.current_train_type = "[body]"
                     # body_center, body_scale = self.model.get_mesh_center_scale("body")
                     # train_loader.dataset.body_center = body_center
                     # train_loader.dataset.body_scale = body_scale.item()
@@ -601,10 +680,10 @@ class Trainer(object):
 
                 if self.scheduler_update_every_step:
                     pbar.set_description(
-                        f"loss={loss_val:.4f} ({total_loss / self.local_step:.4f}), "
-                        f"lr={self.optimizer.param_groups[0]['lr']:.6f}, ")
+                        f"{self.current_train_type} loss={loss_val:.4f} ({total_loss / self.local_step:.4f}), "
+                        f"lr={self.optimizer.param_groups[0]['lr']:.6f}")
                 else:
-                    pbar.set_description(f"loss={loss_val:.4f} ({total_loss / self.local_step:.4f})")
+                    pbar.set_description(f"{self.current_train_type} loss={loss_val:.4f} ({total_loss / self.local_step:.4f})")
                 pbar.update(loader.batch_size)
 
         if self.ema is not None:

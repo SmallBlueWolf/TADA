@@ -350,6 +350,37 @@ class DLMesh(nn.Module):
         return center, scale
 
     @torch.no_grad()
+    def get_wrist_center_scale(self):
+        """获取手腕部位的中心点和缩放系数"""
+        vertices = self.body_model(
+            betas=self.betas,
+            body_pose=self.body_pose,
+            jaw_pose=self.jaw_pose,
+            expression=self.expression,
+            return_verts=True).vertices[0]
+        vertices = normalize_vert(vertices)
+        
+        # 获取手部顶点
+        wrist_vertices = vertices[SMPLXSeg.hands_ids]
+        
+        # 计算手腕中心点 - 稍微偏向手腕而非手指尖端
+        # 手腕区域通常位于手部顶点的底部区域
+        
+        # 先找出手部顶点的最小值和最大值
+        max_v = wrist_vertices.max(0)[0]
+        min_v = wrist_vertices.min(0)[0]
+        
+        # 将中心点稍微上移，使视角能更好地捕捉手腕和前臂交界处
+        center = (max_v + min_v) * 0.5
+        # 向身体方向稍微偏移中心点，以便更好地捕捉手腕
+        center[2] += 0.05  # z轴方向偏移
+        
+        # 计算比例 - 使用手部大小并稍作调整
+        scale = max((max_v - min_v).max(), 0.1)  # 确保至少有一个最小值
+        
+        return center, scale
+
+    @torch.no_grad()
     def export_mesh(self, save_dir):
         mesh = self.get_mesh(is_train=False)[0]
         obj_path = os.path.join(save_dir, 'mesh.obj')

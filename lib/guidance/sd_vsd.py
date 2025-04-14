@@ -37,7 +37,7 @@ def seed_everything(seed):
 
 class StableDiffusion(nn.Module):
     def __init__(self, device, fp16=False, vram_O=False, sd_version='2.1', hf_key=None, t_range=[0.02, 0.98],
-                 weighting_strategy='fantasia3d', opt=None, text=None):
+                 weighting_strategy='fantasia3d', opt=None, text=None, negative=None):
         super().__init__()
 
         self.device = device
@@ -46,6 +46,18 @@ class StableDiffusion(nn.Module):
         self.weighting_strategy = weighting_strategy
         self.opt = opt  # opt参数，与trainer.py中的opt参数一致
         self.text = text
+        # 确保negative属性存在 - 优先使用直接传入的negative参数
+        self.negative = negative if negative is not None else (getattr(opt, 'negative', '') if opt is not None else '')
+        
+        print(f"[INFO] Text prompt: '{self.text}', Negative prompt: '{self.negative}'")
+        
+        # 明确设置手腕训练比例参数
+        if opt is not None and hasattr(opt, 'train_wrist_ratio'):
+            print(f"[INFO] Found train_wrist_ratio in config: {opt.train_wrist_ratio}")
+        else:
+            # 如果配置中没有，手动添加
+            if opt is not None:
+                raise Exception("train_wrist_ratio is not set in config")
 
         print(f'[INFO] loading stable diffusion...')
 
@@ -160,6 +172,9 @@ class StableDiffusion(nn.Module):
         self.latents = None
 
         print(f'[INFO] loaded stable diffusion!')
+        
+        # 初始化完成后立即准备文本嵌入
+        self.prepare_text_embeddings()
 
     @torch.no_grad()
     def get_text_embeds(self, prompt, negative_prompt):
@@ -415,6 +430,68 @@ class StableDiffusion(nn.Module):
         imgs = (imgs * 255).round().astype('uint8')
 
         return imgs
+
+    # calculate the text embeddings.
+    def prepare_text_embeddings(self):
+        if self.text is None:
+            print(f"[WARN] text prompt is not provided.")
+            return
+
+        negative_prompt = getattr(self, 'negative', '')
+        
+        try:
+            print(f"[INFO] Begin preparing text embeddings for text: '{self.text}'")
+            self.text_embeds = {
+                'uncond': self.get_text_embeds([negative_prompt], [negative_prompt]),
+                'default': self.get_text_embeds([f"a 3D rendering of {self.text}, full-body"], [negative_prompt]),
+            }
+
+            # 创建body嵌入
+            print(f"[INFO] Creating body text embeddings...")
+            self.text_embeds['body'] = {
+                d: self.get_text_embeds([f"a {d} view 3D rendering of {self.text}, full-body"], [negative_prompt])
+                for d in ['front', 'side', 'back', "overhead"]
+            }
+
+            # 创建face嵌入
+            id_text = self.text.split("wearing")[0] if "wearing" in self.text else self.text
+            print(f"[INFO] Creating face text embeddings...")
+            self.text_embeds['face'] = {
+                d: self.get_text_embeds([f"a {d} view 3D rendering of {id_text}, face"], [negative_prompt])
+                for d in ['front', 'side', 'back']
+            }
+                
+            # 强制创建wrist嵌入，不管配置如何
+            print(f"[INFO] Creating wrist text embeddings...")
+            
+            # 为不同视角创建专门的手腕描述
+            wrist_prompts = {
+                'front': f"a front view 3D rendering of {id_text}'s hands and wrists with smooth transition to forearms, anatomically correct articulated fingers, and seamless wrist-arm connection",
+                'side': f"a side view 3D rendering of {id_text}'s hands with natural wrist joint and continuous flowing geometry from hand to forearm, proper proportions and clean joint topology",
+                'back': f"a back view 3D rendering of {id_text}'s hands showing detailed knuckles, well-defined tendons, and harmonious geometric continuity between wrist and arm structure"
+            }
+            
+            self.text_embeds['wrist'] = {}
+            for view in ['front', 'side', 'back']:
+                print(f"[DEBUG] Creating wrist embedding for '{view}' view")
+                self.text_embeds['wrist'][view] = self.get_text_embeds(
+                    [wrist_prompts[view]], 
+                    [negative_prompt]
+                )
+            
+            print(f"[INFO] Wrist text embeddings created with keys: {list(self.text_embeds['wrist'].keys())}")
+            
+            print(f"[INFO] Text embeddings prepared successfully. Available types: {list(self.text_embeds.keys())}")
+            
+        except Exception as e:
+            print(f"[ERROR] Failed to prepare text embeddings: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            # 确保至少有基本的嵌入
+            self.text_embeds = {
+                'uncond': self.get_text_embeds([''], ['']),
+                'default': self.get_text_embeds([f"a 3D rendering of {self.text}"], ['']),
+            }
 
 
 if __name__ == '__main__':

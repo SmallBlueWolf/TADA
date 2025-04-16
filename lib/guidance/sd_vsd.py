@@ -471,12 +471,19 @@ class StableDiffusion(nn.Module):
                 'back': f"a back view 3D rendering of {id_text}'s hands showing detailed knuckles, well-defined tendons, and harmonious geometric continuity between wrist and arm structure"
             }
             
+            # 为手腕添加专门的负面提示词，防止手腕过细问题
+            wrist_negative_prompts = {
+                'front': f"{negative_prompt}, thin wrists, bony wrists, unrealistic wrists, narrow wrists, skeletal wrists, deformed wrists, broken wrists, disconnected wrists",
+                'side': f"{negative_prompt}, thin wrists, bony wrists, unrealistic wrists, narrow wrists, skeletal wrists, deformed wrists, broken wrists, disconnected wrists",
+                'back': f"{negative_prompt}, thin wrists, bony wrists, unrealistic wrists, narrow wrists, skeletal wrists, deformed wrists, broken wrists, disconnected wrists"
+            }
+            
             self.text_embeds['wrist'] = {}
             for view in ['front', 'side', 'back']:
                 print(f"[DEBUG] Creating wrist embedding for '{view}' view")
                 self.text_embeds['wrist'][view] = self.get_text_embeds(
                     [wrist_prompts[view]], 
-                    [negative_prompt]
+                    [wrist_negative_prompts[view]]
                 )
             
             print(f"[INFO] Wrist text embeddings created with keys: {list(self.text_embeds['wrist'].keys())}")

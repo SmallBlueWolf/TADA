@@ -24,10 +24,10 @@ test: false
 training:
   anneal_tex_reso: true
   ckpt: scratch
-  iters: 20000
+  iters: 25000
   train_face_ratio: 0.3
   use_dpt: false
-  workspace: ../results/tada_vsd(test5_add_wrist)
+  workspace: ../results/tada_vsd(test7_more_wrist)
   v_pred: True
   t5_iter_percent: 1.0
-  train_wrist_ratio: 0.1
+  train_wrist_ratio: 0.3

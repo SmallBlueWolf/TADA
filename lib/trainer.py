@@ -91,20 +91,6 @@ class Trainer(object):
         # self.guidance = torch.nn.DataParallel(self.guidance, device_ids=[0, 1, 2, 3]).module
         # text prompt
         self.text_embeds = None
-        if self.guidance is not None:
-            for p in self.guidance.parameters():
-                p.requires_grad = False
-            self.prepare_text_embeddings()
-
-        # try out torch 2.0
-        if torch.__version__[0] == '2':
-            self.model = torch.compile(self.model)
-            self.guidance = torch.compile(self.guidance)
-
-        if isinstance(criterion, nn.Module):
-            criterion.to(self.device)
-        self.criterion = criterion
-
         if optimizer is None:
             self.optimizer = optim.Adam(self.model.parameters(), lr=0.001, weight_decay=5e-4)  # naive adam
         else:
@@ -172,44 +158,69 @@ class Trainer(object):
             else:  # path to ckpt
                 self.log(f"[INFO] Loading {self.use_checkpoint} ...")
                 self.load_checkpoint(self.use_checkpoint)
+                
+        # 初始化文本嵌入 - 确保在所有日志相关的属性初始化后再调用
+        if self.guidance is not None:
+            for p in self.guidance.parameters():
+                p.requires_grad = False
+            self.prepare_text_embeddings()
+
+        # try out torch 2.0
+        if torch.__version__[0] == '2':
+            self.model = torch.compile(self.model)
+            self.guidance = torch.compile(self.guidance)
+
+        if isinstance(criterion, nn.Module):
+            criterion.to(self.device)
+        self.criterion = criterion
 
     # calculate the text embeddings.
     def prepare_text_embeddings(self):
         if self.text is None:
-            self.log(f"[WARN] text prompt is not provided.")
+            print(f"[WARN] text prompt is not provided.")
             return
 
+        # 确保负面提示词存在，如果为None则使用空字符串
+        negative_prompt = self.negative if self.negative is not None else ""
+        print(f"[INFO] Using text prompt: '{self.text}', negative prompt: '{negative_prompt}'")
+
         self.text_embeds = {
-            'uncond': self.guidance.get_text_embeds([self.negative], [self.negative]),
-            'default': self.guidance.get_text_embeds([f"a 3D rendering of {self.text}, full-body"], [self.negative]),
+            'uncond': self.guidance.get_text_embeds([negative_prompt], [negative_prompt]),
+            'default': self.guidance.get_text_embeds([f"a 3D rendering of {self.text}, full-body"], [negative_prompt]),
         }
 
         if self.opt.train_face_ratio < 1:
             self.text_embeds['body'] = {
-                d: self.guidance.get_text_embeds([f"a {d} view 3D rendering of {self.text}, full-body"], [self.negative])
+                d: self.guidance.get_text_embeds([f"a {d} view 3D rendering of {self.text}, full-body"], [negative_prompt])
                 for d in ['front', 'side', 'back', "overhead"]
             }
 
         if self.opt.train_face_ratio > 0:
-            id_text = self.text.split("wearing")[0]
+            id_text = self.text.split("wearing")[0] if "wearing" in self.text else self.text
             self.text_embeds['face'] = {
-                d: self.guidance.get_text_embeds([f"a {d} view 3D rendering of {id_text}, face"], [self.negative])
+                d: self.guidance.get_text_embeds([f"a {d} view 3D rendering of {id_text}, face"], [negative_prompt])
                 for d in ['front', 'side', 'back']
             }
 
         # 创建基本的wrist嵌入
-        wrist_prompts = {
-            'front': f"a front view of {id_text}'s hands and wrists with smooth transition to forearms, anatomically correct fingers, and seamless wrist-arm connection",
-            'side': f"a side view of {id_text}'s hands with natural wrist joint and continuous flowing geometry from hand to forearm",
-            'back': f"a back view of {id_text}'s hands showing detailed structure and harmonious geometric continuity between wrist and arm"
-        }
+        if hasattr(self.opt, 'train_wrist_ratio') and self.opt.train_wrist_ratio > 0:
+            print(f"[INFO] Creating wrist embeddings with ratio: {self.opt.train_wrist_ratio}")
+            id_text = self.text.split("wearing")[0] if "wearing" in self.text else self.text
+            wrist_prompts = {
+                'front': f"a front view of {id_text}'s hands and wrists with smooth transition to forearms, anatomically correct fingers, and seamless wrist-arm connection",
+                'side': f"a side view of {id_text}'s hands with natural wrist joint and continuous flowing geometry from hand to forearm",
+                'back': f"a back view of {id_text}'s hands showing detailed structure and harmonious geometric continuity between wrist and arm"
+            }
+            
+            self.text_embeds['wrist'] = {}
+            for view in ['front', 'side', 'back']:
+                self.text_embeds['wrist'][view] = self.guidance.get_text_embeds(
+                    [wrist_prompts.get(view, wrist_prompts['front'])], 
+                    [negative_prompt]
+                )
+            print(f"[INFO] Created wrist embeddings with keys: {list(self.text_embeds['wrist'].keys())}")
         
-        self.text_embeds['wrist'] = {}
-        for view in ['front', 'side', 'back']:
-            self.text_embeds['wrist'][view] = self.guidance.get_text_embeds(
-                [wrist_prompts.get(view, wrist_prompts['front'])], 
-                [negative_prompt]
-            )
+        print(f"[INFO] All text embeddings prepared successfully. Available types: {list(self.text_embeds.keys())}")
 
     def __del__(self):
         if hasattr(self, 'log_ptr') and self.log_ptr:
@@ -220,7 +231,7 @@ class Trainer(object):
             if not self.mute:
                 # print(*args)
                 self.console.print(*args, **kwargs)
-            if self.log_ptr:
+            if hasattr(self, 'log_ptr') and self.log_ptr:
                 print(*args, file=self.log_ptr)
                 self.log_ptr.flush()  # write immediately to file
 
@@ -527,7 +538,8 @@ class Trainer(object):
                     train_loader.dataset.train_wrist = True
                     wrist_center, wrist_scale = self.model.get_wrist_center_scale()
                     train_loader.dataset.wrist_center = wrist_center
-                    train_loader.dataset.wrist_scale = wrist_scale.item() * 8  # 增加初始缩放系数，确保视角更宽
+                    # 使用更合适的缩放系数，根据simple_script.py中的参数优化视角
+                    train_loader.dataset.wrist_scale = wrist_scale.item() * 5  # 适度缩放，配合radius_range=[0.2, 0.25]
                     self.current_train_type = "[wrist]"
                 else:
                     # 全身训练模式
@@ -645,7 +657,9 @@ class Trainer(object):
 
             if self.global_step % 20 == 0:
                 pred = cv2.cvtColor(pred_rgbs, cv2.COLOR_RGB2BGR)
-                save_path = os.path.join(self.workspace, 'train-vis', f'{self.name}/{self.global_step:04d}.png')
+                # 在文件名中增加当前训练模式后缀
+                train_type_suffix = self.current_train_type.replace('[', '_').replace(']', '')
+                save_path = os.path.join(self.workspace, 'train-vis', f'{self.name}/{self.global_step:04d}{train_type_suffix}.png')
                 os.makedirs(os.path.dirname(save_path), exist_ok=True)
                 cv2.imwrite(save_path, pred)
 
@@ -764,6 +778,12 @@ class Trainer(object):
         save_path = os.path.join(self.workspace, 'validation', f'{name}.png')
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         cv2.imwrite(save_path, np.hstack(vis_frames))
+
+        # 额外保存一个带有训练模式标记的版本
+        if hasattr(self, 'current_train_type'):
+            train_type_suffix = self.current_train_type.replace('[', '_').replace(']', '')
+            save_path_with_type = os.path.join(self.workspace, 'validation', f'{name}{train_type_suffix}.png')
+            cv2.imwrite(save_path_with_type, np.hstack(vis_frames))
 
         average_loss = total_loss / self.local_step
         self.stats["valid_loss"].append(average_loss)

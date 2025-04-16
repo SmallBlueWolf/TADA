@@ -484,18 +484,38 @@ class ViewDataset(torch.utils.data.Dataset):
                 )
             elif self.train_wrist:
                 camera_type = "wrist"
-                # 手腕训练模式，使用更小的视角范围，更集中于手腕部位
+                
+                # 根据当前处理的是左手还是右手来选择适当的中心点
+                if random.random() < 0.5:  # 50%概率选择右手
+                    wrist_shift = torch.as_tensor([0.25, 0.1, 0.05], device=self.device).view(1, 3)
+                    phi_range = [85, 95]  # 右手侧视角
+                    if random.random() < 0.34:  # 33%概率选择正面视角
+                        phi_range = [-5, 5]  # 正面视角 phi=0
+                    elif random.random() < 0.5:  # 33%概率选择侧面视角
+                        phi_range = [85, 95]  # 侧面视角 phi=90
+                    else:  # 33%概率选择背面视角
+                        phi_range = [175, 185]  # 背面视角 phi=180
+                else:  # 50%概率选择左手
+                    wrist_shift = torch.as_tensor([-0.25, 0.1, 0.05], device=self.device).view(1, 3)
+                    if random.random() < 0.34:  # 33%概率选择正面视角
+                        phi_range = [-5, 5]  # 正面视角 phi=0
+                    elif random.random() < 0.5:  # 33%概率选择侧面视角
+                        phi_range = [-95, -85]  # 左手侧面视角 phi=-90
+                    else:  # 33%概率选择背面视角
+                        phi_range = [175, 185]  # 背面视角 phi=180
+                
                 poses, dirs, thetas, phis, radius = near_head_poses(
                     1,
                     self.device,
                     return_dirs=self.opt.dir_text,
-                    phi_range=[-60, 60],  # 扩大水平视角范围
-                    theta_range=[55, 85],  # 稍微调整垂直视角范围
+                    phi_range=phi_range,  # 根据左右手设置合适的水平视角范围
+                    theta_range=[75, 95],  # 更水平的视角以便看到手腕
                     angle_overhead=self.opt.angle_overhead,
                     angle_front=self.opt.angle_front,
                     jitter=self.opt.jitter_pose,
-                    shift=self.wrist_center,
-                    face_scale=self.wrist_scale * 1.5  # 增加距离系数，让相机更远一些
+                    shift=wrist_shift,  # 根据左右手选择的中心点
+                    face_scale=self.wrist_scale,
+                    radius_range=[0.2, 0.25]  # 更近距离观察手腕
                 )
             else:
                 camera_type = "face"
